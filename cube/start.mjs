@@ -81,10 +81,12 @@ function allowed(req, websocket = false) {
   try { url = new URL(`http://${req.headers.host}`); } catch { return false; }
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && !/^[a-z0-9][a-z0-9-]*-[a-z0-9]{8}(?:-stg)?\.cube\.site$/.test(url.hostname)) return false;
   const unsafe = websocket || !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
-  if (!unsafe) return true;
   const proto = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
   if (req.headers.origin && req.headers.origin !== `${proto}://${req.headers.host}`) return false;
-  if (req.headers['sec-fetch-site'] && !['same-origin', 'none'].includes(req.headers['sec-fetch-site'])) return false;
+  if (req.headers['sec-fetch-site'] && !['same-origin', 'none'].includes(req.headers['sec-fetch-site'])) {
+    // Cube's frame navigation crosses origins; its API reads must remain same-origin.
+    if (unsafe || !['document', 'iframe'].includes(req.headers['sec-fetch-dest'])) return false;
+  }
   return true;
 }
 function headers(req) {
@@ -94,7 +96,10 @@ server.on('connection', socket => { sockets.add(socket); socket.on('close', () =
 server.on('request', (req, res) => {
   if (!allowed(req)) { res.writeHead(403); res.end('Forbidden'); return; }
   const proxy = http.request({ host: '127.0.0.1', port: innerPort, method: req.method, path: req.url, headers: headers(req) }, response => {
-    res.writeHead(response.statusCode, response.headers);
+    const responseHeaders = { ...response.headers };
+    delete responseHeaders['access-control-allow-origin'];
+    delete responseHeaders['access-control-allow-credentials'];
+    res.writeHead(response.statusCode, responseHeaders);
     response.pipe(res);
   });
   proxy.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end('T3 server unavailable'); });

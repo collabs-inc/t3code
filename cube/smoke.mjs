@@ -32,15 +32,18 @@ async function launch() {
 async function shutdown() {
   const child = processUnderTest;
   if (!child) return;
-  const runtime = JSON.parse(await readFile(path.join(data, 'userdata/server-runtime.json'), 'utf8'));
-  const done = once(child, 'exit');
-  child.kill('SIGTERM');
-  const force = setTimeout(() => child.kill('SIGKILL'), 12000);
-  const [code] = await done;
-  clearTimeout(force);
+  const runtime = await readFile(path.join(data, 'userdata/server-runtime.json'), 'utf8').then(JSON.parse).catch(() => undefined);
+  let code = child.exitCode;
+  if (child.exitCode === null && child.signalCode === null) {
+    const done = once(child, 'exit');
+    child.kill('SIGTERM');
+    const force = setTimeout(() => child.kill('SIGKILL'), 12000);
+    [code] = await done;
+    clearTimeout(force);
+  }
   processUnderTest = undefined;
   assert.equal(code, 0, 'launcher shuts down cleanly');
-  assert.throws(() => process.kill(runtime.pid, 0), 'upstream process is also reaped');
+  if (runtime) assert.throws(() => process.kill(runtime.pid, 0), 'upstream process is also reaped');
 }
 try {
   const first = await launch();
@@ -57,6 +60,15 @@ try {
     request.on('error', reject);
   });
   assert.equal(hostileHostStatus, 403);
+  assert.equal((await fetch(`${first}/api/auth/session`, {
+    headers: { Origin: 'https://evil.example' },
+  })).status, 403, 'cross-origin reads cannot borrow the gateway credential');
+  assert.equal((await fetch(`${first}/api/auth/session`, {
+    headers: { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Dest': 'empty' },
+  })).status, 403);
+  assert.equal((await fetch(first, {
+    headers: { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Dest': 'iframe' },
+  })).status, 200, 'Cube can still embed the app document');
   assert.equal((await fetch(`${first}/api/auth/websocket-ticket`, {
     method: 'POST', headers: { Origin: 'https://evil.example' },
   })).status, 403);
@@ -71,6 +83,6 @@ try {
   await shutdown();
   console.log('PASS: HTTP UI, authenticated API, origin/host checks, WebSocket ticket, persistent restart, and process cleanup.');
 } finally {
-  if (processUnderTest) await shutdown();
-  await rm(data, { recursive: true, force: true });
+  try { if (processUnderTest) await shutdown(); }
+  finally { await rm(data, { recursive: true, force: true }); }
 }
