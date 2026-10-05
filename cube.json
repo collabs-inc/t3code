@@ -1,0 +1,8 @@
+{
+  "name": "T3 Code",
+  "description": "An agent development workspace using this machine's Claude Code, Codex and other installed coding agents.",
+  "icon": "apps/web/public/apple-touch-icon.png",
+  "platforms": ["linux", "darwin"],
+  "install": "sh cube/install.sh",
+  "start": "node cube/start.mjs"
+}
